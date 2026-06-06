@@ -162,7 +162,8 @@ keep_phyla <- c(
   "Campylobacterota",
   "Pseudomonadota",
   "Actinomycetota",
-  "Bacteroidota"
+  "Bacteroidota",
+  "Fusobacteriota"
 )
 
 s_phyloseqin <- subset_taxa(
@@ -175,16 +176,18 @@ filter <- as.data.frame(tax_table(s_phyloseqin))
 
 unique(filter$Phylum)
 
-#keep ordination with all taxa, but subset top5 phyla, non-top5 phlya are labeled "NA" --> then relabed as "Other"
+#keep ordination with all taxa, but subset top5 phyla, non-top5 phlya are labeled "NA" --> then relabled as "Other"
 p <- plot_ordination(s_phyloseqin, ord_clr_combat, type="taxa", color="Phylum") + 
   geom_point(size = 4)
+
 p$data$Phylum[is.na(p$data$Phylum)] <- "Other"
-all_phyla <- unique(p$data$Phylum)
+all_phyla <- sort(unique(p$data$Phylum))
 ordered_phyla <- c(all_phyla[all_phyla != "Other"], "Other")
 p$data$Phylum <- factor(p$data$Phylum, levels = ordered_phyla)
 p$data <- p$data[order(p$data$Phylum == "Other", decreasing = TRUE), ]
 num_top_phyla <- length(ordered_phyla) - 1
 my_colors <- c(hue_pal()(num_top_phyla), "gray")
+
 p + scale_color_manual(values = my_colors)
 
 ggsave(filename = "16s_PCA_taxa_genus.svg", width = 7.5, height = 5, units = "in")
@@ -258,7 +261,8 @@ keep_phyla <- c(
   "Campylobacterota",
   "Pseudomonadota",
   "Actinomycetota",
-  "Bacteroidota"
+  "Bacteroidota",
+  "Fusobacteriota"
 )
 
 s_phyloseqin <- subset_taxa(
@@ -269,15 +273,16 @@ s_phyloseqin <- subset_taxa(
 #keep ordination with all taxa, but subset top5 phyla, non-top5 phlya are labeled "NA" --> then relabed as "Other"
 p <- plot_ordination(s_phyloseqin, ord_clr_combat, type="taxa", color="Phylum") + 
   geom_point(size = 4)
+
 p$data$Phylum[is.na(p$data$Phylum)] <- "Other"
-all_phyla <- unique(p$data$Phylum)
+all_phyla <- sort(unique(p$data$Phylum))
 ordered_phyla <- c(all_phyla[all_phyla != "Other"], "Other")
 p$data$Phylum <- factor(p$data$Phylum, levels = ordered_phyla)
 p$data <- p$data[order(p$data$Phylum == "Other", decreasing = TRUE), ]
 num_top_phyla <- length(ordered_phyla) - 1
 my_colors <- c(hue_pal()(num_top_phyla), "gray")
-p + scale_color_manual(values = my_colors)
 
+p + scale_color_manual(values = my_colors)
 
 ggsave(filename = "16s_PCA_taxa_genus_no_hp.svg", width = 7.5, height = 5, units = "in")
 ggsave(filename = "16s_PCA_taxa_genus_no_hp.png", width = 7.5, height = 5, units = "in")
