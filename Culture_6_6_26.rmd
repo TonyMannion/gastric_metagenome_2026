@@ -1,0 +1,1054 @@
+```{r}
+#install.packages('BiocManager')
+library('BiocManager')
+
+#BiocManager::install('phyloseq')
+library(phyloseq); packageVersion("phyloseq")
+
+#install.packages("ggplot2")
+library("ggplot2")
+
+#BiocManager::install("microbiome")
+library(microbiome)  
+
+#install.packages("vegan")
+library("vegan")
+
+#install.packages("ggpubr")
+library("ggpubr")
+
+#BiocManager::install("limma")
+#library("limma")
+
+#install.packages("tidyverse")
+library("tidyverse")
+
+#install.packages("svglite")
+library("svglite")
+
+#install.packages("forcats")
+library(forcats)
+
+
+```
+
+####
+
+
+```{r}
+# Step 1: Load otu table
+otu_table <- read.csv("species_otus.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+otu_table <- as.matrix(otu_table)
+otu_table[is.na(otu_table)] <- 0
+otu <-otu_table(otu_table, taxa_are_rows = TRUE)
+
+# Step 2: Load taxonomy table
+taxonomy_table <- read.csv("species_full_tax.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+taxonomy_table <- as.matrix(taxonomy_table)
+tax <-tax_table(taxonomy_table)
+
+# Step 3: Load metadata
+metadata_table  <- read.delim("metadata.txt", header = TRUE, sep = "\t", row.names = "MIT_Accession")  # Adjust file name and format as needed
+#metadata_table  <- as.matrix(metadata_table)
+metadata <-sample_data(metadata_table)
+
+# Step 4: Create phyloseq object
+
+####
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+df_melted <- psmelt(phyloseqin)
+
+unique_values <- unique(df_melted$genus)
+
+length(unique_values)
+
+#note [Eubacterium] sulci and Bacillota bacterium genera need to be added so total is 62
+
+```
+
+```{r}
+# Step 1: Load otu table
+otu_table <- read.csv("species_otus.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+otu_table <- as.matrix(otu_table)
+otu_table[is.na(otu_table)] <- 0
+otu <-otu_table(otu_table, taxa_are_rows = TRUE)
+
+# Step 2: Load taxonomy table
+taxonomy_table <- read.csv("species_full_tax.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+taxonomy_table <- as.matrix(taxonomy_table)
+tax <-tax_table(taxonomy_table)
+
+# Step 3: Load metadata
+metadata_table  <- read.delim("metadata.txt", header = TRUE, sep = "\t", row.names = "MIT_Accession")  # Adjust file name and format as needed
+#metadata_table  <- as.matrix(metadata_table)
+metadata <-sample_data(metadata_table)
+
+# Step 4: Create phyloseq object
+
+####
+phyloseqin <- phyloseq(otu, tax, metadata)
+phyloseqin = tax_glom(phyloseqin, taxrank="Species", NArm=FALSE)
+s_phyloseqin <- subset_samples(phyloseqin)
+ps_clr <- microbiome::transform(s_phyloseqin, "pa") #convert to binary presence/absence
+
+total_otus <- ntaxa(ps_clr) # get number of unqiue OTUs at species level
+total_otus
+
+df_melted <- psmelt(ps_clr) #convert to long df
+
+#get top cultured species in all samples
+otu_sums <- df_melted %>%
+  group_by(OTU) %>%
+  summarise(
+    total_abundance = sum(Abundance, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+otu_counts <- df_melted %>%
+  filter(Abundance > 0) %>%        # keep only present OTUs
+  group_by(Sample) %>%
+  summarise(unique_OTUs = n_distinct(OTU), .groups = "drop")
+
+otu_counts_rn <- otu_counts %>%
+  as.data.frame()
+
+rownames(otu_counts_rn) <- otu_counts_rn$Sample
+otu_counts_rn$Sample <- NULL
+
+df_joined <- merge(
+  metadata,
+  otu_counts_rn,
+  by = "row.names",
+  all.x = TRUE
+)
+
+rownames(df_joined) <- df_joined$Row.names
+df_joined$Row.names <- NULL
+
+
+df_joined$unique_OTUs[is.na(df_joined$unique_OTUs)] <- 0
+
+summary(df_joined$unique_OTUs) # get summary stats on species cultured per sample
+
+#get histology dx for each sample in single column
+df_joined$Dx <- ifelse(
+  df_joined$Biopsy_collection_date_year == "year_20",
+  df_joined$Dx_20y,
+  df_joined$Dx_26y
+)
+
+#get Hp status for each sample in single column
+df_joined$Hp_status <- ifelse(
+  df_joined$Biopsy_collection_date_year == "year_20",
+  df_joined$Hp_20y..Steiner.,
+  df_joined$Hp_26y..Steiner.
+)
+
+df_joined$Hp_status <- as.character(df_joined$Hp_status)
+
+p <- ggplot(df_joined, aes(x = Biopsy_collection_date_year, y = unique_OTUs)) +
+  geom_boxplot(outlier.shape = NA) +      # hide default outliers
+  geom_jitter(width = 0.2, size = 2, alpha = 0.7, aes(color = Dx, shape = Hp_status),) +
+  theme_classic() +
+  facet_wrap(~ Prog.Nonprog.between.20.26y) 
+
+ggsave(filename = "box_plot_species.svg", width = 7.5, height = 5, units = "in")
+ggsave(filename = "box_plot_species.png", width = 7.5, height = 5, units = "in")
+
+
+# Nonprog 20 vs 26 year
+otu_AB <- df_joined %>% 
+  filter(Year_Prog %in% c("year_20__N", "year_26__N"))
+
+wilcox.test(unique_OTUs ~ Year_Prog, data = otu_AB)
+
+# Prog 20 vs 26 year
+
+otu_AB <- df_joined %>% 
+  filter(Year_Prog %in% c("year_20__P", "year_26__P"))
+
+wilcox.test(unique_OTUs ~ Year_Prog, data = otu_AB)
+
+# Nonprog vs Prog 20 year
+
+otu_AB <- df_joined %>% 
+  filter(Year_Prog %in% c("year_20__N", "year_20__P"))
+
+wilcox.test(unique_OTUs ~ Year_Prog, data = otu_AB)
+
+# Nonprog vs Prog 26 year
+
+otu_AB <- df_joined %>% 
+  filter(Year_Prog %in% c("year_26__N", "year_26__P"))
+
+wilcox.test(unique_OTUs ~ Year_Prog, data = otu_AB)
+
+# Nonprog vs Prog 20+26 year 
+
+wilcox.test(unique_OTUs ~ Prog.Nonprog.between.20.26y, data = df_joined)
+
+wilcox.test(unique_OTUs ~ Hp_status, data = df_joined)
+
+# sex difference
+
+otu_AB <- df_joined %>% 
+  filter(Year_Prog %in% c("", "year_20__P"))
+
+wilcox.test(unique_OTUs ~ Sex, data = otu_AB)
+
+p <- ggplot(df_joined, aes(x = Sex, y = unique_OTUs)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(
+    width = 0.2, size = 2, alpha = 0.7,
+    aes(color = Biopsy_collection_date_year)
+  ) +
+  theme_classic() +
+  facet_wrap(~ Prog.Nonprog.between.20.26y)
+
+# Hp status difference
+
+wilcox.test(unique_OTUs ~ Hp_status, data = df_joined)
+
+otu_AB <- df_joined %>% 
+  filter(Year_Prog %in% c("year_20__N", "year_26__N"))
+
+wilcox.test(unique_OTUs ~ Hp_status, data = otu_AB)
+
+p <- ggplot(df_joined, aes(x = Hp_status, y = unique_OTUs)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(
+    width = 0.2, size = 2, alpha = 0.7,
+    aes(color = Biopsy_collection_date_year)
+  ) +
+  theme_classic() +
+  facet_wrap(~ Prog.Nonprog.between.20.26y)
+
+
+### comparing histology score
+
+
+
+p <- ggplot(df_joined, aes(x = Dx, y = unique_OTUs)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(
+    width = 0.2, size = 2, alpha = 0.7,
+    aes(color = Biopsy_collection_date_year)
+  ) +
+  scale_x_discrete(limits = rev(sort(unique(df_joined$Dx)))) +
+  theme_classic() +
+  facet_wrap(~ Prog.Nonprog.between.20.26y)
+
+
+otu_AB <- df_joined %>% 
+  filter(Dx %in% c("", "MAG"))
+
+wilcox.test(unique_OTUs ~ Prog.Nonprog.between.20.26y, data = otu_AB)
+```
+###
+
+```{r}
+# Step 1: Load otu table
+otu_table <- read.csv("species_otus.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+otu_table <- as.matrix(otu_table)
+otu_table[is.na(otu_table)] <- 0
+otu <-otu_table(otu_table, taxa_are_rows = TRUE)
+
+# Step 2: Load taxonomy table
+taxonomy_table <- read.csv("species_full_tax.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+taxonomy_table <- as.matrix(taxonomy_table)
+tax <-tax_table(taxonomy_table)
+
+# Step 3: Load metadata
+metadata_table  <- read.delim("metadata.txt", header = TRUE, sep = "\t", row.names = "MIT_Accession")  # Adjust file name and format as needed
+#metadata_table  <- as.matrix(metadata_table)
+metadata <-sample_data(metadata_table)
+
+# Step 4: Create phyloseq object
+
+####
+phyloseqin <- phyloseq(otu, tax, metadata)
+#phyloseqin = tax_glom(phyloseqin, taxrank="Species", NArm=FALSE)
+s_phyloseqin <- subset_samples(phyloseqin)
+ps_clr <- microbiome::transform(s_phyloseqin, "pa")
+
+ord_clr <- phyloseq::ordinate(ps_clr, "PCoA", "jaccard", binary=TRUE)
+
+
+#20 vs 26 year
+plot_ordination(ps_clr, ord_clr, type="Samples", color="Biopsy_collection_date_year")+ geom_point(size = 4,aes(shape=Prog.Nonprog.between.20.26y)) + scale_shape_manual(values = c(16, 17),name = "Non-prog (N) or Prog (P)") +  stat_chull(aes(color = Biopsy_collection_date_year, fill = Biopsy_collection_date_year), alpha = 0.1, geom = "polygon", show.legend = FALSE) 
+ggsave(filename = "culture_PCA_species.svg", width = 7.5, height = 5, units = "in")
+ggsave(filename = "culture_PCA_species.png", width = 7.5, height = 5, units = "in")
+
+
+#permanova tests
+distances = phyloseq::distance(ps_clr, method="jaccard", binary=TRUE)
+adonis2(distances ~ sample_data(ps_clr)$Biopsy_collection_date_year)
+
+#top5_phlya
+keep_phyla <- c(
+  "Bacillota",
+  "Campylobacterota",
+  "Pseudomonadota",
+  "Actinomycetota",
+  "Bacteroidota",
+  "Fusobacteriota"
+)
+
+
+tax_table(ps_clr)
+
+
+s_phyloseqin <- subset_taxa(
+  ps_clr,
+  phylum %in% keep_phyla
+)
+
+#keep ordination with all taxa, but subset top5 phyla, non-top5 phlya are labeled "NA"
+plot_ordination(s_phyloseqin, ord_clr, type="taxa", color="phylum" )+ geom_point(size = 4)  
+ggsave(filename = "culture_PCA_species_taxa.svg", width = 7.5, height = 5, units = "in")
+ggsave(filename = "culture_PCA_species_taxa.png", width = 7.5, height = 5, units = "in")
+```
+
+
+
+```{r}
+
+(ps_clr <- microbiome::transform(s_phyloseqin, "pa"))
+prev <- taxa_sums(ps_clr)  
+#ps_clr <- prune_taxa(prev > 2, ps_clr)
+
+ord_clr <- phyloseq::ordinate(ps_clr, "PCoA", "jaccard", binary=TRUE)
+plot_ordination(ps_clr, ord_clr, type="Samples", color="Year_Prog")+ geom_point(size = 4)+stat_chull(aes(color = Year_Prog, fill = Year_Prog), alpha = 0.1, geom = "polygon")
+
+distances = phyloseq::distance(ps_clr, method="jaccard", binary=TRUE)
+adonis2(distances ~ sample_data(ps_clr)$Year_Prog)
+```
+
+```{r}
+####
+phyloseqin <- phyloseq(otu, tax, metadata)
+phyloseqin = tax_glom(phyloseqin, taxrank="Species", NArm=FALSE)
+s_phyloseqin <- subset_samples(phyloseqin)
+
+s_phyloseqin <- subset_samples(phyloseqin, Prog.Nonprog.between.20.26y !='N')
+(ps_clr <- microbiome::transform(s_phyloseqin, "pa"))
+prev <- taxa_sums(ps_clr)  
+#ps_clr <- prune_taxa(prev > 2, ps_clr)
+ord_clr <- phyloseq::ordinate(ps_clr, "PCoA", "jaccard", binary=TRUE)
+plot_ordination(ps_clr, ord_clr, type="Samples", color="Year_Prog")+ geom_point(size = 4)+stat_chull(aes(color = Year_Prog, fill = Year_Prog), alpha = 0.1, geom = "polygon")
+
+#ggsave("PCA_3.png")
+
+distances = phyloseq::distance(ps_clr, method="jaccard", binary=TRUE)
+adonis2(distances ~ sample_data(ps_clr)$Year_Prog)
+
+
+```
+
+```{r}
+#### biplot
+# phyloseqin <- phyloseq(otu, tax, metadata)
+# phyloseqin = tax_glom(phyloseqin, taxrank="Species", NArm=FALSE)
+# s_phyloseqin <- subset_samples(phyloseqin)
+# #s_phyloseqin <- subset_taxa(s_phyloseqin, Phylum !="Fusobacteriota")
+# 
+# s_phyloseqin <- subset_samples(s_phyloseqin, Prog.Nonprog.between.20.26y !='N')
+# (ps_clr <- microbiome::transform(s_phyloseqin, "pa"))
+# ord_clr <- phyloseq::ordinate(ps_clr, "PCoA", "jaccard", binary=TRUE)
+# plot_ordination(ps_clr, ord_clr, type="split", shape="Biopsy_collection_date_year", color="Phylum" )+ geom_point(size = 2)  + facet_wrap(~Phylum)
+
+```
+
+```{r}
+
+####
+phyloseqin <- phyloseq(otu, tax, metadata)
+phyloseqin = tax_glom(phyloseqin, taxrank="Species", NArm=FALSE)
+s_phyloseqin <- subset_samples(phyloseqin)
+
+s_phyloseqin <- subset_samples(phyloseqin, Prog.Nonprog.between.20.26y !='P')
+(ps_clr <- microbiome::transform(s_phyloseqin, "pa"))
+prev <- taxa_sums(ps_clr)  
+#ps_clr <- prune_taxa(prev > 2, ps_clr)
+
+ord_clr <- phyloseq::ordinate(ps_clr, "PCoA", "jaccard", binary=TRUE)
+plot_ordination(ps_clr, ord_clr, type="Samples", color="Year_Prog")+ geom_point(size = 4)+stat_chull(aes(color = Year_Prog, fill = Year_Prog), alpha = 0.1, geom = "polygon")
+
+#ggsave("PCA_4.png")
+
+distances = phyloseq::distance(ps_clr, method="jaccard", binary=TRUE)
+adonis2(distances ~ sample_data(ps_clr)$Year_Prog)
+```
+
+
+```{r}
+####
+phyloseqin <- phyloseq(otu, tax, metadata)
+phyloseqin = tax_glom(phyloseqin, taxrank="Species", NArm=FALSE)
+s_phyloseqin <- subset_samples(phyloseqin)
+
+(ps_clr <- microbiome::transform(s_phyloseqin, "pa"))
+prev <- taxa_sums(ps_clr)  
+#ps_clr <- prune_taxa(prev > 2, ps_clr)
+
+ord_clr <- phyloseq::ordinate(ps_clr, "PCoA", "jaccard", binary=TRUE)
+plot_ordination(ps_clr, ord_clr, type="Samples", color="Prog.Nonprog.between.20.26y")+ geom_point(size = 4)+stat_chull(aes(color = Prog.Nonprog.between.20.26y, fill = Prog.Nonprog.between.20.26y), alpha = 0.1, geom = "polygon")
+
+#ggsave("PCA_5.png")
+
+distances = phyloseq::distance(ps_clr, method="jaccard", binary=TRUE)
+adonis2(distances ~ sample_data(ps_clr)$Prog.Nonprog.between.20.26y)
+
+```
+
+
+
+```{r}
+####
+phyloseqin <- phyloseq(otu, tax, metadata)
+phyloseqin = tax_glom(phyloseqin, taxrank="Species", NArm=FALSE)
+s_phyloseqin <- subset_samples(phyloseqin)
+
+(ps_clr <- microbiome::transform(s_phyloseqin, "pa"))
+prev <- taxa_sums(ps_clr)  
+#ps_clr <- prune_taxa(prev > 2, ps_clr)
+
+ord_clr <- phyloseq::ordinate(ps_clr, "PCoA", "jaccard", binary=TRUE)
+plot_ordination(ps_clr, ord_clr, type="Samples", color="Biopsy_collection_date_year")+ geom_point(size = 4)+stat_chull(aes(color = Biopsy_collection_date_year, fill = Biopsy_collection_date_year), alpha = 0.1, geom = "polygon")
+
+#ggsave("PCA_5.png")
+
+distances = phyloseq::distance(ps_clr, method="jaccard", binary=TRUE)
+adonis2(distances ~ sample_data(ps_clr)$Biopsy_collection_date_year)
+
+```
+
+```{r}
+####
+phyloseqin <- phyloseq(otu, tax, metadata)
+phyloseqin = tax_glom(phyloseqin, taxrank="Species", NArm=FALSE)
+s_phyloseqin <- subset_samples(phyloseqin)
+
+s_phyloseqin <- subset_samples(phyloseqin, Biopsy_collection_date_year !='year_20')
+(ps_clr <- microbiome::transform(s_phyloseqin, "pa"))
+prev <- taxa_sums(ps_clr)  
+#ps_clr <- prune_taxa(prev > 2, ps_clr)
+
+ord_clr <- phyloseq::ordinate(ps_clr, "PCoA", "jaccard", binary=TRUE)
+plot_ordination(ps_clr, ord_clr, type="Samples", color="Year_Prog")+ geom_point(size = 4)+stat_chull(aes(color = Year_Prog, fill = Year_Prog), alpha = 0.1, geom = "polygon")
+
+#ggsave("PCA_5.png")
+
+distances = phyloseq::distance(ps_clr, method="jaccard", binary=TRUE)
+adonis2(distances ~ sample_data(ps_clr)$Year_Prog)
+
+```
+
+```{r}
+####
+phyloseqin <- phyloseq(otu, tax, metadata)
+phyloseqin = tax_glom(phyloseqin, taxrank="Species", NArm=FALSE)
+s_phyloseqin <- subset_samples(phyloseqin)
+
+s_phyloseqin <- subset_samples(phyloseqin, Biopsy_collection_date_year !='year_26')
+(ps_clr <- microbiome::transform(s_phyloseqin, "pa"))
+prev <- taxa_sums(ps_clr)  
+#ps_clr <- prune_taxa(prev > 2, ps_clr)
+
+ord_clr <- phyloseq::ordinate(ps_clr, "PCoA", "jaccard", binary=TRUE)
+plot_ordination(ps_clr, ord_clr, type="Samples", color="Year_Prog")+ geom_point(size = 4)+stat_chull(aes(color = Year_Prog, fill = Year_Prog), alpha = 0.1, geom = "polygon")
+
+#ggsave("PCA_6.png")
+
+distances = phyloseq::distance(ps_clr, method="jaccard", binary=TRUE)
+adonis2(distances ~ sample_data(ps_clr)$Year_Prog)
+
+```
+
+```{r}
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+s_phyloseqin <- subset_samples(phyloseqin, Prog.Nonprog.between.20.26y =='P')
+
+phyloseqin_merged = tax_glom(s_phyloseqin, taxrank="Species", NArm=FALSE)
+
+#clr-transformed compositions of otu table
+(ps_clr <- microbiome::transform(phyloseqin_merged, "pa"))
+prev <- taxa_sums(ps_clr)  
+#ps_clr <- prune_taxa(prev > 2, ps_clr)
+
+results <- data.frame()
+
+# Loop through each ASV
+for (i in 1:length(taxa_names(ps_clr))) {
+
+  asv <- taxa_names(ps_clr)[i]
+
+  # Extract presence/absence (binary) data for each ASV
+  case_presence <- otu_table(subset_samples(ps_clr, Year_Prog == "Year_20__P"))[i, ]
+  cont_presence <- otu_table(subset_samples(ps_clr, Year_Prog == "Year_26__P"))[i, ]
+
+  # Prepare a 2x2 contingency table
+  contingency_table <- matrix(c(sum(case_presence), length(case_presence) - sum(case_presence),
+                                sum(cont_presence), length(cont_presence) - sum(cont_presence)),
+                              nrow = 2, byrow = TRUE)
+
+  # Skip if table is all zeros or has no variation
+  if (all(contingency_table == 0) || any(rowSums(contingency_table) == 0) || any(colSums(contingency_table) == 0)) {
+    next
+  }
+
+  # Perform Fisher’s exact test
+  fisher_test <- fisher.test(contingency_table)
+
+  # Add results
+  results <- rbind(results, data.frame(
+    Representative_ASV = asv,
+    Odds_Ratio = fisher_test$estimate,   # odds ratio
+    P = fisher_test$p.value
+  ))
+}
+
+# Perform FDR correction
+results$FDR_BH <- p.adjust(results$P, method = 'BH')
+
+# Add taxa annotations
+results <- inner_join(results,
+                      rownames_to_column(data.frame(tax_table(ps_clr)), "Representative_ASV"),
+                      by = "Representative_ASV")
+
+# Save results
+write.table(results, "fisher_binary_Year_Prog_Species.txt",
+            quote = FALSE, sep = "\t", row.names = FALSE)
+
+```
+
+```{r}
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+s_phyloseqin <- subset_samples(phyloseqin, Prog.Nonprog.between.20.26y =='N')
+
+phyloseqin_merged = tax_glom(s_phyloseqin, taxrank="Species", NArm=FALSE)
+
+#clr-transformed compositions of otu table
+(ps_clr <- microbiome::transform(phyloseqin_merged, "pa"))
+prev <- taxa_sums(ps_clr)  
+#ps_clr <- prune_taxa(prev > 2, ps_clr)
+
+results <- data.frame()
+
+# Loop through each ASV
+for (i in 1:length(taxa_names(ps_clr))) {
+
+  asv <- taxa_names(ps_clr)[i]
+
+  # Extract presence/absence (binary) data for each ASV
+  case_presence <- otu_table(subset_samples(ps_clr, Year_Prog == "Year_20__N"))[i, ]
+  cont_presence <- otu_table(subset_samples(ps_clr, Year_Prog == "Year_26__N"))[i, ]
+
+  # Prepare a 2x2 contingency table
+  contingency_table <- matrix(c(sum(case_presence), length(case_presence) - sum(case_presence),
+                                sum(cont_presence), length(cont_presence) - sum(cont_presence)),
+                              nrow = 2, byrow = TRUE)
+
+  # Skip if table is all zeros or has no variation
+  if (all(contingency_table == 0) || any(rowSums(contingency_table) == 0) || any(colSums(contingency_table) == 0)) {
+    next
+  }
+
+  # Perform Fisher’s exact test
+  fisher_test <- fisher.test(contingency_table)
+
+  # Add results
+  results <- rbind(results, data.frame(
+    Representative_ASV = asv,
+    Odds_Ratio = fisher_test$estimate,   # odds ratio
+    P = fisher_test$p.value
+  ))
+}
+
+# Perform FDR correction
+results$FDR_BH <- p.adjust(results$P, method = 'BH')
+
+# Add taxa annotations
+results <- inner_join(results,
+                      rownames_to_column(data.frame(tax_table(ps_clr)), "Representative_ASV"),
+                      by = "Representative_ASV")
+
+# Save results
+write.table(results, "fisher_binary_Year_NP_Species.txt",
+            quote = FALSE, sep = "\t", row.names = FALSE)
+
+```
+
+```{r}
+
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+s_phyloseqin <- subset_samples(phyloseqin, Biopsy_collection_date_year =='year_20')
+
+phyloseqin_merged = tax_glom(s_phyloseqin, taxrank="Species", NArm=FALSE)
+
+#clr-transformed compositions of otu table
+(ps_clr <- microbiome::transform(phyloseqin_merged, "pa"))
+prev <- taxa_sums(ps_clr)  
+#ps_clr <- prune_taxa(prev > 2, ps_clr)
+
+results <- data.frame()
+
+# Loop through each ASV
+for (i in 1:length(taxa_names(ps_clr))) {
+
+  asv <- taxa_names(ps_clr)[i]
+
+  # Extract presence/absence (binary) data for each ASV
+  case_presence <- otu_table(subset_samples(ps_clr, Year_Prog == "Year_20__N"))[i, ]
+  cont_presence <- otu_table(subset_samples(ps_clr, Year_Prog == "Year_20__P"))[i, ]
+
+  # Prepare a 2x2 contingency table
+  contingency_table <- matrix(c(sum(case_presence), length(case_presence) - sum(case_presence),
+                                sum(cont_presence), length(cont_presence) - sum(cont_presence)),
+                              nrow = 2, byrow = TRUE)
+
+  # Skip if table is all zeros or has no variation
+  if (all(contingency_table == 0) || any(rowSums(contingency_table) == 0) || any(colSums(contingency_table) == 0)) {
+    next
+  }
+
+  # Perform Fisher’s exact test
+  fisher_test <- fisher.test(contingency_table)
+
+  # Add results
+  results <- rbind(results, data.frame(
+    Representative_ASV = asv,
+    Odds_Ratio = fisher_test$estimate,   # odds ratio
+    P = fisher_test$p.value
+  ))
+}
+
+# Perform FDR correction
+results$FDR_BH <- p.adjust(results$P, method = 'BH')
+
+# Add taxa annotations
+results <- inner_join(results,
+                      rownames_to_column(data.frame(tax_table(ps_clr)), "Representative_ASV"),
+                      by = "Representative_ASV")
+
+# Save results
+write.table(results, "fisher_binary_Year_20__Non_vs_Prog_Species.txt",
+            quote = FALSE, sep = "\t", row.names = FALSE)
+
+```
+
+
+```{r}
+
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+s_phyloseqin <- subset_samples(phyloseqin, Biopsy_collection_date_year =='year_26')
+
+phyloseqin_merged = tax_glom(s_phyloseqin, taxrank="Species", NArm=FALSE)
+
+#clr-transformed compositions of otu table
+(ps_clr <- microbiome::transform(phyloseqin_merged, "pa"))
+prev <- taxa_sums(ps_clr)  
+#ps_clr <- prune_taxa(prev > 2, ps_clr)
+
+results <- data.frame()
+
+# Loop through each ASV
+for (i in 1:length(taxa_names(ps_clr))) {
+
+  asv <- taxa_names(ps_clr)[i]
+
+  # Extract presence/absence (binary) data for each ASV
+  case_presence <- otu_table(subset_samples(ps_clr, Year_Prog == "Year_26__N"))[i, ]
+  cont_presence <- otu_table(subset_samples(ps_clr, Year_Prog == "Year_26__P"))[i, ]
+
+  # Prepare a 2x2 contingency table
+  contingency_table <- matrix(c(sum(case_presence), length(case_presence) - sum(case_presence),
+                                sum(cont_presence), length(cont_presence) - sum(cont_presence)),
+                              nrow = 2, byrow = TRUE)
+
+  # Skip if table is all zeros or has no variation
+  if (all(contingency_table == 0) || any(rowSums(contingency_table) == 0) || any(colSums(contingency_table) == 0)) {
+    next
+  }
+
+  # Perform Fisher’s exact test
+  fisher_test <- fisher.test(contingency_table)
+
+  # Add results
+  results <- rbind(results, data.frame(
+    Representative_ASV = asv,
+    Odds_Ratio = fisher_test$estimate,   # odds ratio
+    P = fisher_test$p.value
+  ))
+}
+
+# Perform FDR correction
+results$FDR_BH <- p.adjust(results$P, method = 'BH')
+
+# Add taxa annotations
+results <- inner_join(results,
+                      rownames_to_column(data.frame(tax_table(ps_clr)), "Representative_ASV"),
+                      by = "Representative_ASV")
+
+# Save results
+write.table(results, "fisher_binary_Year_26__Non_vs_Prog_Species.txt",
+            quote = FALSE, sep = "\t", row.names = FALSE)
+
+```
+
+
+
+```{r}
+
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+s_phyloseqin <- subset_samples(phyloseqin)
+
+phyloseqin_merged = tax_glom(s_phyloseqin, taxrank="Species", NArm=FALSE)
+
+#clr-transformed compositions of otu table
+(ps_clr <- microbiome::transform(phyloseqin_merged, "pa"))
+prev <- taxa_sums(ps_clr)  
+#ps_clr <- prune_taxa(prev > 2, ps_clr)
+
+results <- data.frame()
+
+# Loop through each ASV
+for (i in 1:length(taxa_names(ps_clr))) {
+
+  asv <- taxa_names(ps_clr)[i]
+
+  # Extract presence/absence (binary) data for each ASV
+  case_presence <- otu_table(subset_samples(ps_clr, Prog.Nonprog.between.20.26y == "N"))[i, ]
+  cont_presence <- otu_table(subset_samples(ps_clr, Prog.Nonprog.between.20.26y == "P"))[i, ]
+
+  # Prepare a 2x2 contingency table
+  contingency_table <- matrix(c(sum(case_presence), length(case_presence) - sum(case_presence),
+                                sum(cont_presence), length(cont_presence) - sum(cont_presence)),
+                              nrow = 2, byrow = TRUE)
+
+  # Skip if table is all zeros or has no variation
+  if (all(contingency_table == 0) || any(rowSums(contingency_table) == 0) || any(colSums(contingency_table) == 0)) {
+    next
+  }
+
+  # Perform Fisher’s exact test
+  fisher_test <- fisher.test(contingency_table)
+
+  # Add results
+  results <- rbind(results, data.frame(
+    Representative_ASV = asv,
+    Odds_Ratio = fisher_test$estimate,   # odds ratio
+    P = fisher_test$p.value
+  ))
+}
+
+# Perform FDR correction
+results$FDR_BH <- p.adjust(results$P, method = 'BH')
+
+# Add taxa annotations
+results <- inner_join(results,
+                      rownames_to_column(data.frame(tax_table(ps_clr)), "Representative_ASV"),
+                      by = "Representative_ASV")
+
+# Save results
+write.table(results, "fisher_binary_Prog_vs_Np_Species.txt",
+            quote = FALSE, sep = "\t", row.names = FALSE)
+
+```
+
+```{r}
+
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+s_phyloseqin <- subset_samples(phyloseqin)
+
+phyloseqin_merged = tax_glom(s_phyloseqin, taxrank="Species", NArm=FALSE)
+
+#clr-transformed compositions of otu table
+(ps_clr <- microbiome::transform(phyloseqin_merged, "pa"))
+prev <- taxa_sums(ps_clr)  
+#ps_clr <- prune_taxa(prev > 2, ps_clr)
+
+results <- data.frame()
+
+# Loop through each ASV
+for (i in 1:length(taxa_names(ps_clr))) {
+
+  asv <- taxa_names(ps_clr)[i]
+
+  # Extract presence/absence (binary) data for each ASV
+  case_presence <- otu_table(subset_samples(ps_clr, Biopsy_collection_date_year == "Year_20"))[i, ]
+  cont_presence <- otu_table(subset_samples(ps_clr, Biopsy_collection_date_year == "Year_26"))[i, ]
+
+  # Prepare a 2x2 contingency table
+  contingency_table <- matrix(c(sum(case_presence), length(case_presence) - sum(case_presence),
+                                sum(cont_presence), length(cont_presence) - sum(cont_presence)),
+                              nrow = 2, byrow = TRUE)
+
+  # Skip if table is all zeros or has no variation
+  if (all(contingency_table == 0) || any(rowSums(contingency_table) == 0) || any(colSums(contingency_table) == 0)) {
+    next
+  }
+
+  # Perform Fisher’s exact test
+  fisher_test <- fisher.test(contingency_table)
+
+  # Add results
+  results <- rbind(results, data.frame(
+    Representative_ASV = asv,
+    Odds_Ratio = fisher_test$estimate,   # odds ratio
+    P = fisher_test$p.value
+  ))
+}
+
+# Perform FDR correction
+results$FDR_BH <- p.adjust(results$P, method = 'BH')
+
+# Add taxa annotations
+results <- inner_join(results,
+                      rownames_to_column(data.frame(tax_table(ps_clr)), "Representative_ASV"),
+                      by = "Representative_ASV")
+
+# Save results
+write.table(results, "fisher_binary_Year_Species.txt",
+            quote = FALSE, sep = "\t", row.names = FALSE)
+
+```
+
+
+
+
+
+```{r}
+####
+biplot
+####
+
+# 
+# phyloseqin <- phyloseq(otu, tax, metadata)
+# 
+# s_phyloseqin <- subset_samples(phyloseqin, Prog.Nonprog.between.20.26y !='N')
+# 
+# s_phyloseqin <- subset_taxa(s_phyloseqin, Phylum !="Fusobacteriota")
+# 
+# 
+# rel_phyloseqin <- microbiome::transform(s_phyloseqin, "compositional")
+# 
+# #need to use bray curtis distance because Aitchison does not work (creates error)
+# ord_clr <- phyloseq::ordinate(rel_phyloseqin, "PCoA", "bray")
+# 
+# plot_ordination(rel_phyloseqin, ord_clr, type="split", shape="Year_Prog", color="Phylum" )+ geom_point(size = 2)  + facet_wrap(~Phylum, ncol = 6)
+# 
+# ggsave("PCA_7.png",width = 10, height = 4.5, unit = "inches", dpi = 300)
+```
+
+
+```{r}
+
+
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+
+phyloseqin_merged = tax_glom(phyloseqin, taxrank="Species", NArm=FALSE)
+
+
+#clr-transformed compositions of otu table
+(ps_clr <- microbiome::transform(phyloseqin_merged, "pa"))
+#ps_clr <- prune_taxa(prev > 2, ps_clr)
+otu_table(ps_clr)
+
+heatmap <- plot_heatmap(ps_clr, low="white", high="black")
+
+heatmap$data
+
+
+# Check unique OTU values
+unique(heatmap$data$OTU)
+
+# Force as character first
+heatmap$data$OTU <- as.character(heatmap$data$OTU)
+
+# Alphabetical order
+heatmap$data$OTU <- factor(heatmap$data$OTU, levels = rev(sort(unique(heatmap$data$OTU))))
+
+# Now plot
+ggplot(heatmap$data, aes(Sample, OTU, fill = Abundance)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "black") +
+  facet_grid(~Biopsy_collection_date_year + Prog.Nonprog.between.20.26y)
+
+
+ggsave(filename = "Species_heatmap.svg", width = 26, height = 10, units = "in")
+
+#percent version
+
+df_total_abundance <- heatmap$data %>%
+  group_by(Year_Prog, OTU) %>%
+  summarise(total_abundance = sum(Abundance, na.rm = TRUE), .groups = "drop")
+
+df_total_samples <- heatmap$data %>%
+  group_by(Year_Prog) %>%
+  summarise(total_samples_in_year = n_distinct(Sample), .groups = "drop")
+
+
+df_percents <- df_total_abundance %>%
+  left_join(df_total_samples, by = "Year_Prog") %>%
+  # Calculate percentage 
+  mutate(percent_samples = total_abundance/ total_samples_in_year * 100)
+
+
+ggplot(df_percents, aes( Year_Prog, OTU, fill = percent_samples)) +
+  geom_tile(color = "black") +
+  scale_fill_gradient(low = "white", high = "red",  limits = c(0, 100)) +
+  geom_text(aes(label = sprintf("%.1f", percent_samples)), color = "black", size = 4) +
+theme_minimal(base_size = 5)
+
+ggsave(filename = "Species_percent_heatmap.svg", width = 26, height = 20, units = "in")
+ggsave(filename = "Species_percent_heatmap.png", width = 26, height = 20, units = "in")
+
+pivot <- df_percents %>%
+  pivot_wider(
+    id_cols = OTU,       # keep Category as an identifier column
+    names_from = Year_Prog,        # pivot on Type
+    values_from = percent_samples       # fill with Value
+  )
+
+filtered <- pivot %>%
+  filter(Year_20__N >= Year_26__N, Year_20__P < Year_26__P)
+
+#difference between year 20 vs 26 for NP is less than 5, and year 26 have more than year 20 for Prog
+filtered <- pivot %>%
+  filter(abs(Year_20__N - Year_26__N)<5, Year_26__P > Year_20__P)
+
+# year percents
+
+
+df_total_abundance <- heatmap$data %>%
+  group_by(Biopsy_collection_date_year, OTU) %>%
+  summarise(total_abundance = sum(Abundance, na.rm = TRUE), .groups = "drop")
+
+df_total_samples <- heatmap$data %>%
+  group_by(Biopsy_collection_date_year) %>%
+  summarise(total_samples_in_year = n_distinct(Sample), .groups = "drop")
+
+
+df_percents <- df_total_abundance %>%
+  left_join(df_total_samples, by = "Biopsy_collection_date_year") %>%
+  # Calculate percentage 
+  mutate(percent_samples = total_abundance/ total_samples_in_year * 100)
+
+
+
+#significant different OTUs based chi-squared test
+otu_list <- c("Stenotrophomonas", "Enterococcus", "Serratia", "Klebsiella", "Pseudomonas", "Brevundimonas")
+
+df_filtered <- df_percents %>% filter(OTU %in% otu_list)
+
+
+df_filtered <- df_filtered %>%
+  mutate(OTU = factor(OTU, levels = otu_list))
+
+ggplot(df_filtered, aes(
+  x = Biopsy_collection_date_year,
+  y = percent_samples,
+  fill = Biopsy_collection_date_year
+)) +
+  geom_col() +  # use geom_col() when you already have values
+  facet_wrap(~OTU) +  # now respects the factor order
+  #scale_fill_brewer(palette = "Set2") +
+  theme_minimal(base_size = 20) +
+  labs(
+    x = "Year",
+    y = "Percent of samples",
+    fill = "Year"
+  )
+ggsave(filename = "Species_percent_bar.svg", width = 10, height = 10, units = "in")
+ggsave(filename = "Species_percent_bar.png", width = 10, height = 10, units = "in")
+```
+```{r}
+
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+
+phyloseqin_merged = tax_glom(phyloseqin, taxrank="Species", NArm=FALSE)
+
+
+#clr-transformed compositions of otu table
+(ps_clr <- microbiome::transform(phyloseqin_merged, "pa"))
+
+heatmap <- plot_heatmap(ps_clr, low="white", high="black")
+
+heatmap$data
+
+
+# Check unique OTU values
+unique(heatmap$data$OTU)
+
+# Force as character first
+heatmap$data$OTU <- as.character(heatmap$data$OTU)
+
+# Alphabetical order
+heatmap$data$OTU <- factor(heatmap$data$OTU, levels = rev(sort(unique(heatmap$data$OTU))))
+
+#filter OTUs by percentile ranks
+
+df_total_abundance <- heatmap$data %>%
+  group_by(OTU) %>%
+  summarise(total_abundance = sum(Abundance, na.rm = TRUE), .groups = "drop")
+
+df_total_samples <- heatmap$data %>%
+  group_by(OTU) %>%
+  summarise(total_samples_in_year = n_distinct(Sample), .groups = "drop")
+
+
+df_percents_OTUs <- df_total_abundance %>%
+  left_join(df_total_samples, by = "OTU") %>%
+  # Calculate percentage 
+  mutate(percent_samples = total_abundance/ total_samples_in_year * 100)
+
+
+#create percentile ranks
+df_percents_OTUs$percentile_rank <- percent_rank(df_percents_OTUs$percent_samples)
+
+#filter for top 50 percentile rank
+df_percents_OTUs <- df_percents_OTUs[df_percents_OTUs$percentile_rank > 0.5, ]
+
+
+
+#
+df_total_abundance <- heatmap$data %>%
+  group_by(Year_Prog, OTU) %>%
+  summarise(total_abundance = sum(Abundance, na.rm = TRUE), .groups = "drop")
+
+df_total_samples <- heatmap$data %>%
+  group_by(Year_Prog) %>%
+  summarise(total_samples_in_year = n_distinct(Sample), .groups = "drop")
+
+
+df_percents <- df_total_abundance %>%
+  left_join(df_total_samples, by = "Year_Prog") %>%
+  # Calculate percentage 
+  mutate(percent_samples = total_abundance/ total_samples_in_year * 100)
+
+
+filtered_df <- semi_join(df_percents, df_percents_OTUs, by = "OTU")
+
+
+ggplot(filtered_df, aes( Year_Prog, OTU, fill = percent_samples)) +
+  geom_tile(color = "black") +
+  scale_fill_gradient(low = "white", high = "red",  limits = c(0, 100)) +
+  geom_text(aes(label = sprintf("%.1f", percent_samples)), color = "black", size = 4) +
+theme_minimal(base_size = 20)
+
+ggsave(filename = "Species_percent_heatmap_percentile.svg", width = 10, height = 10, units = "in")
+ggsave(filename = "Species_percent_heatmap_percentile.png", width = 10, height = 10, units = "in")
+
+```
+}}

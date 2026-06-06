@@ -1,0 +1,985 @@
+```{r}
+
+#C:/Users/antho/Desktop/run1and2/
+#C:/Users/Tony Mannion/Desktop/run1and2/
+
+#load packaged
+
+#install.packages('BiocManager')
+library('BiocManager')
+
+#BiocManager::install('phyloseq')
+library(phyloseq); packageVersion("phyloseq")
+
+#install.packages("ggplot2")
+library("ggplot2")
+
+#BiocManager::install("microbiome")
+library(microbiome)  
+
+#install.packages("vegan")
+library("vegan")
+
+#install.packages("ggpubr")
+library("ggpubr")
+
+#BiocManager::install("limma")
+library("limma")
+
+#install.packages("tidyverse")
+library("tidyverse")
+
+#BiocManager::install("sva")
+library(sva) # ComBat
+
+#install.packages("scales")
+library(scales)
+
+
+```
+
+```{r}
+#setwd("C:/Users/antho/Desktop/run1and2/")
+# Step 1: Load otu table
+otu_table <- read.csv("otu_table.txt", sep = "\t", row.names = 1) 
+# Adjust file name and format as needed
+otu_table <- as.matrix(otu_table)
+otu <-otu_table(otu_table, taxa_are_rows = TRUE)
+
+# Step 2: Load taxonomy table
+taxonomy_table <- read.csv("tax_table.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+taxonomy_table <- as.matrix(taxonomy_table)
+tax <-tax_table(taxonomy_table)
+
+# Step 3: Load metadata
+metadata_table  <- read.delim("metadata.txt", header = TRUE, sep = "\t", row.names = "File_Name")  # Adjust file name and format as needed
+#metadata_table  <- as.matrix(metadata_table)
+metadata <-sample_data(metadata_table)
+
+# Create phyloseq object
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+rel_phyloseqin <- microbiome::transform(phyloseqin, "compositional")
+
+df <- rel_phyloseqin %>% psmelt()
+
+write.table(df, "16S_relative_abundance.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+phyloseqin_merged = tax_glom(rel_phyloseqin, taxrank="Phylum", NArm=FALSE)
+TopNOTUs <- names(sort(taxa_sums(phyloseqin_merged), TRUE)[1:5])
+Top10 <- prune_taxa(TopNOTUs, phyloseqin_merged)
+plot_bar(Top10, fill = 'Phylum', x='MIT_Accession')+ facet_grid(~ Biopsy_collection_date_year+Hp_status+Prog.Nonprog.between.20.26y , scales='free',space='free') + xlab('Sample') + ylab('Reads')
+
+
+phyloseqin_merged = tax_glom(rel_phyloseqin, taxrank="Family", NArm=FALSE)
+TopNOTUs <- names(sort(taxa_sums(phyloseqin_merged), TRUE)[1:10])
+Top10 <- prune_taxa(TopNOTUs, phyloseqin_merged)
+plot_bar(Top10, fill = 'Family', x='MIT_Accession')+ facet_grid(~ Biopsy_collection_date_year+Hp_status+Prog.Nonprog.between.20.26y , scales='free',space='free') + xlab('Sample') + ylab('Proportion of Reads')
+
+phyloseqin_merged = tax_glom(rel_phyloseqin, taxrank="Genus", NArm=FALSE)
+TopNOTUs <- names(sort(taxa_sums(phyloseqin_merged), TRUE)[1:10])
+Top10 <- prune_taxa(TopNOTUs, phyloseqin_merged)
+plot_bar(Top10, fill = 'Genus', x='MIT_Accession')+ facet_grid(~ Biopsy_collection_date_year+Hp_status+Prog.Nonprog.between.20.26y , scales='free',space='free') + xlab('Sample') + ylab('Proportion of Reads')+geom_col(color = "black", size = 0.1)
+
+ggsave(filename = "16s_barplot_genus.svg", width = 7.5, height = 5, units = "in")
+ggsave(filename = "16s_barplot_genus.png", width = 7.5, height = 5, units = "in")
+
+#get mean relative abudance for each taxa 
+df_melted <- psmelt(rel_phyloseqin) #convert to long df
+
+#get top cultured species in all samples
+otu_mean <- df_melted %>%
+  group_by(OTU) %>%
+  summarise(
+    total_abundance = mean(Abundance, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+```
+
+
+```{r}
+#testing sva combat batch effect correction programs
+
+#setwd("C:/Users/antho/Desktop/run1and2/")
+# Step 1: Load otu table
+otu_table <- read.csv("otu_table.txt", sep = "\t", row.names = 1) 
+# Adjust file name and format as needed
+otu_table <- as.matrix(otu_table)
+otu <-otu_table(otu_table, taxa_are_rows = TRUE)
+
+# Step 2: Load taxonomy table
+taxonomy_table <- read.csv("tax_table.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+taxonomy_table <- as.matrix(taxonomy_table)
+tax <-tax_table(taxonomy_table)
+
+# Step 3: Load metadata
+metadata_table  <- read.delim("metadata.txt", header = TRUE, sep = "\t", row.names = "File_Name")  # Adjust file name and format as needed
+#metadata_table  <- as.matrix(metadata_table)
+metadata <-sample_data(metadata_table)
+
+# Create phyloseq object
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+#clr-transformed compositions of otu table without batch correction
+(ps_clr <- microbiome::transform(phyloseqin, "clr"))
+
+
+
+#https://rdrr.io/bioc/sva/man/ComBat.html
+#https://evayiwenwang.github.io/Managing_batch_effects/adjust.html
+# parametric adjustment
+#combat_edata1 = ComBat(dat=edata, batch=batch, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+
+# non-parametric adjustment, mean-only version
+#combat_edata2 = ComBat(dat=edata, batch=batch, mod=NULL, par.prior=FALSE, mean.only=TRUE)
+
+# reference-batch version, with covariates
+#combat_edata3 = ComBat(dat=edata, batch=batch, mod=mod, par.prior=TRUE, ref.batch=3)
+
+
+#clr-transformed compositions of otu table with combat remove batch correction --> parametric adjustment
+ps_clr.combat <- ComBat(dat=otu_table(ps_clr), batch = sample_data(ps_clr)$X16srRNA_Run_., mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+ps_clr.combat.otu=otu_table(ps_clr.combat, taxa_are_rows = TRUE)
+ps_clr_combat=phyloseq(ps_clr.combat.otu, tax,metadata)
+ord_clr_combat <- phyloseq::ordinate(ps_clr_combat, "RDA", "euclidean")
+
+#20 vs 26 year
+plot_ordination(ps_clr_combat, ord_clr_combat, type="Samples", color="Biopsy_collection_date_year")+ geom_point(size = 4,aes(shape=Prog.Nonprog.between.20.26y)) + scale_shape_manual(values = c(16, 17),name = "Non-prog (N) or Prog (P)") +  stat_chull(aes(color = Biopsy_collection_date_year, fill = Biopsy_collection_date_year), alpha = 0.1, geom = "polygon", show.legend = FALSE) 
+ggsave(filename = "16s_PCA_genus.svg", width = 7.5, height = 5, units = "in")
+ggsave(filename = "16s_PCA_genus.png", width = 7.5, height = 5, units = "in")
+
+
+#permanova tests
+distances = phyloseq::distance(ps_clr_combat, method="euclidean")
+adonis2(distances ~ sample_data(ps_clr_combat)$Biopsy_collection_date_year)
+
+
+#top5_phlya
+keep_phyla <- c(
+  "Bacillota",
+  "Campylobacterota",
+  "Pseudomonadota",
+  "Actinomycetota",
+  "Bacteroidota"
+)
+
+s_phyloseqin <- subset_taxa(
+  ps_clr_combat,
+  Phylum %in% keep_phyla
+)
+
+
+filter <- as.data.frame(tax_table(s_phyloseqin))
+
+unique(filter$Phylum)
+
+#keep ordination with all taxa, but subset top5 phyla, non-top5 phlya are labeled "NA" --> then relabed as "Other"
+p <- plot_ordination(s_phyloseqin, ord_clr_combat, type="taxa", color="Phylum") + 
+  geom_point(size = 4)
+p$data$Phylum[is.na(p$data$Phylum)] <- "Other"
+all_phyla <- unique(p$data$Phylum)
+ordered_phyla <- c(all_phyla[all_phyla != "Other"], "Other")
+p$data$Phylum <- factor(p$data$Phylum, levels = ordered_phyla)
+p$data <- p$data[order(p$data$Phylum == "Other", decreasing = TRUE), ]
+num_top_phyla <- length(ordered_phyla) - 1
+my_colors <- c(hue_pal()(num_top_phyla), "gray")
+p + scale_color_manual(values = my_colors)
+
+ggsave(filename = "16s_PCA_taxa_genus.svg", width = 7.5, height = 5, units = "in")
+ggsave(filename = "16s_PCA_taxa_genus.png", width = 7.5, height = 5, units = "in")
+```
+
+
+```{r}
+#repeat, but removing helicobacter reads
+
+#testing sva combat batch effect correction programs
+
+#setwd("C:/Users/antho/Desktop/run1and2/")
+# Step 1: Load otu table
+otu_table <- read.csv("otu_table.txt", sep = "\t", row.names = 1) 
+# Adjust file name and format as needed
+otu_table <- as.matrix(otu_table)
+otu <-otu_table(otu_table, taxa_are_rows = TRUE)
+
+# Step 2: Load taxonomy table
+taxonomy_table <- read.csv("tax_table.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+taxonomy_table <- as.matrix(taxonomy_table)
+tax <-tax_table(taxonomy_table)
+
+# Step 3: Load metadata
+metadata_table  <- read.delim("metadata.txt", header = TRUE, sep = "\t", row.names = "File_Name")  # Adjust file name and format as needed
+#metadata_table  <- as.matrix(metadata_table)
+metadata <-sample_data(metadata_table)
+
+# Create phyloseq object
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+#remove Helicobacter reads
+phyloseqin <- subset_taxa(phyloseqin, Genus != "Helicobacter")
+
+#clr-transformed compositions of otu table without batch correction
+(ps_clr <- microbiome::transform(phyloseqin, "clr"))
+
+
+#https://rdrr.io/bioc/sva/man/ComBat.html
+#https://evayiwenwang.github.io/Managing_batch_effects/adjust.html
+# parametric adjustment
+#combat_edata1 = ComBat(dat=edata, batch=batch, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+
+# non-parametric adjustment, mean-only version
+#combat_edata2 = ComBat(dat=edata, batch=batch, mod=NULL, par.prior=FALSE, mean.only=TRUE)
+
+# reference-batch version, with covariates
+#combat_edata3 = ComBat(dat=edata, batch=batch, mod=mod, par.prior=TRUE, ref.batch=3)
+
+
+#clr-transformed compositions of otu table with combat remove batch correction --> parametric adjustment
+ps_clr.combat <- ComBat(dat=otu_table(ps_clr), batch = sample_data(ps_clr)$X16srRNA_Run_., mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+ps_clr.combat.otu=otu_table(ps_clr.combat, taxa_are_rows = TRUE)
+ps_clr_combat=phyloseq(ps_clr.combat.otu, tax,metadata)
+ord_clr_combat <- phyloseq::ordinate(ps_clr_combat, "RDA", "euclidean")
+
+#20 vs 26 year
+plot_ordination(ps_clr_combat, ord_clr_combat, type="Samples", color="Biopsy_collection_date_year")+ geom_point(size = 4,aes(shape=Prog.Nonprog.between.20.26y)) + scale_shape_manual(values = c(16, 17),name = "Non-prog (N) or Prog (P)") +  stat_chull(aes(color = Biopsy_collection_date_year, fill = Biopsy_collection_date_year), alpha = 0.1, geom = "polygon", show.legend = FALSE) 
+ggsave(filename = "16s_PCA_genus_no_hp.svg", width = 7.5, height = 5, units = "in")
+ggsave(filename = "16s_PCA_genus_no_hp.png", width = 7.5, height = 5, units = "in")
+
+
+#permanova tests
+distances = phyloseq::distance(ps_clr_combat, method="euclidean")
+adonis2(distances ~ sample_data(ps_clr_combat)$Biopsy_collection_date_year)
+
+#top5_phlya
+keep_phyla <- c(
+  "Bacillota",
+  "Campylobacterota",
+  "Pseudomonadota",
+  "Actinomycetota",
+  "Bacteroidota"
+)
+
+s_phyloseqin <- subset_taxa(
+  ps_clr_combat,
+  Phylum %in% keep_phyla
+)
+
+#keep ordination with all taxa, but subset top5 phyla, non-top5 phlya are labeled "NA" --> then relabed as "Other"
+p <- plot_ordination(s_phyloseqin, ord_clr_combat, type="taxa", color="Phylum") + 
+  geom_point(size = 4)
+p$data$Phylum[is.na(p$data$Phylum)] <- "Other"
+all_phyla <- unique(p$data$Phylum)
+ordered_phyla <- c(all_phyla[all_phyla != "Other"], "Other")
+p$data$Phylum <- factor(p$data$Phylum, levels = ordered_phyla)
+p$data <- p$data[order(p$data$Phylum == "Other", decreasing = TRUE), ]
+num_top_phyla <- length(ordered_phyla) - 1
+my_colors <- c(hue_pal()(num_top_phyla), "gray")
+p + scale_color_manual(values = my_colors)
+
+
+ggsave(filename = "16s_PCA_taxa_genus_no_hp.svg", width = 7.5, height = 5, units = "in")
+ggsave(filename = "16s_PCA_taxa_genus_no_hp.png", width = 7.5, height = 5, units = "in")
+
+```
+
+
+```{r}
+#testing sva combat batch effect correction programs
+
+#setwd("C:/Users/antho/Desktop/run1and2/")
+# Step 1: Load otu table
+otu_table <- read.csv("otu_table.txt", sep = "\t", row.names = 1) 
+# Adjust file name and format as needed
+otu_table <- as.matrix(otu_table)
+otu <-otu_table(otu_table, taxa_are_rows = TRUE)
+
+# Step 2: Load taxonomy table
+taxonomy_table <- read.csv("tax_table.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+taxonomy_table <- as.matrix(taxonomy_table)
+tax <-tax_table(taxonomy_table)
+
+# Step 3: Load metadata
+metadata_table  <- read.delim("metadata.txt", header = TRUE, sep = "\t", row.names = "File_Name")  # Adjust file name and format as needed
+#metadata_table  <- as.matrix(metadata_table)
+metadata <-sample_data(metadata_table)
+
+# Create phyloseq object
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+#clr-transformed compositions of otu table without batch correction
+(ps_clr <- microbiome::transform(phyloseqin, "clr"))
+
+
+#https://rdrr.io/bioc/sva/man/ComBat.html
+#https://evayiwenwang.github.io/Managing_batch_effects/adjust.html
+# parametric adjustment
+#combat_edata1 = ComBat(dat=edata, batch=batch, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+
+# non-parametric adjustment, mean-only version
+#combat_edata2 = ComBat(dat=edata, batch=batch, mod=NULL, par.prior=FALSE, mean.only=TRUE)
+
+# reference-batch version, with covariates
+#combat_edata3 = ComBat(dat=edata, batch=batch, mod=mod, par.prior=TRUE, ref.batch=3)
+
+
+#clr-transformed compositions of otu table with combat remove batch correction --> parametric adjustment
+ps_clr.combat <- ComBat(dat=otu_table(ps_clr), batch = sample_data(ps_clr)$X16srRNA_Run_., mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+ps_clr.combat.otu=otu_table(ps_clr.combat, taxa_are_rows = TRUE)
+ps_clr_combat=phyloseq(ps_clr.combat.otu, tax,metadata)
+ord_clr_combat <- phyloseq::ordinate(ps_clr_combat, "PCoA", "euclidean")
+
+
+#Non-prog vs prog  
+plot_ordination(ps_clr_combat, ord_clr_combat, type="Samples", color="Prog.Nonprog.between.20.26y")+ geom_point(size = 4,aes(shape=Biopsy_collection_date_year)) + scale_shape_manual(values = c(16, 17),name = "Biospy Collection Year") +  scale_color_manual(values = c("red", "blue"),name = "Non-prog (N) or Prog (P)") +  stat_chull(aes(color = Prog.Nonprog.between.20.26y, fill = Prog.Nonprog.between.20.26y), alpha = 0.1, geom = "polygon", show.legend = FALSE) 
+
+#permanova tests
+distances = phyloseq::distance(ps_clr_combat, method="euclidean")
+adonis2(distances ~ sample_data(ps_clr_combat)$Prog.Nonprog.between.20.26y)
+```
+
+```{r}
+
+#filter out prog group for 20 vs 26 year
+
+
+#setwd("C:/Users/antho/Desktop/run1and2/")
+# Step 1: Load otu table
+otu_table <- read.csv("otu_table.txt", sep = "\t", row.names = 1) 
+# Adjust file name and format as needed
+otu_table <- as.matrix(otu_table)
+otu <-otu_table(otu_table, taxa_are_rows = TRUE)
+
+# Step 2: Load taxonomy table
+taxonomy_table <- read.csv("tax_table.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+taxonomy_table <- as.matrix(taxonomy_table)
+tax <-tax_table(taxonomy_table)
+
+# Step 3: Load metadata
+metadata_table  <- read.delim("metadata.txt", header = TRUE, sep = "\t", row.names = "File_Name")  # Adjust file name and format as needed
+#metadata_table  <- as.matrix(metadata_table)
+metadata <-sample_data(metadata_table)
+
+# Create phyloseq object
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+#clr-transformed compositions of otu table without batch correction
+(ps_clr <- microbiome::transform(phyloseqin, "clr"))
+
+
+
+#clr-transformed compositions of otu table with combat remove batch correction --> parametric adjustment
+ps_clr.combat <- ComBat(dat=otu_table(ps_clr), batch = sample_data(ps_clr)$X16srRNA_Run_., mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+ps_clr.combat.otu=otu_table(ps_clr.combat, taxa_are_rows = TRUE)
+ps_clr_combat=phyloseq(ps_clr.combat.otu, tax,metadata)
+ps_clr_combat <- subset_samples(ps_clr_combat, Prog.Nonprog.between.20.26y!='P')
+ord_clr_combat <- phyloseq::ordinate(ps_clr_combat, "PCoA", "euclidean")
+plot_ordination(ps_clr_combat, ord_clr_combat, type="Samples", color="Biopsy_collection_date_year")+ geom_point(size = 4,aes(shape=Prog.Nonprog.between.20.26y)) + scale_shape_manual(values = c(16, 17),name = "Non-prog (N) or Prog (P)") +  scale_color_manual(values = c("red", "blue"),name = "Biospy Collection Year") +  stat_chull(aes(color = Biopsy_collection_date_year, fill = Biopsy_collection_date_year), alpha = 0.1, geom = "polygon", show.legend = FALSE) 
+
+#permanova tests
+distances = phyloseq::distance(ps_clr_combat, method="euclidean")
+adonis2(distances ~ sample_data(ps_clr_combat)$Biopsy_collection_date_year)
+
+
+```
+
+```{r}
+# plotting enriched taxa in 20 year samples from non-prog group
+
+#testing sva combat batch effect correction programs
+
+#setwd("C:/Users/antho/Desktop/run1and2/")
+# Step 1: Load otu table
+otu_table <- read.csv("otu_table.txt", sep = "\t", row.names = 1) 
+# Adjust file name and format as needed
+otu_table <- as.matrix(otu_table)
+otu <-otu_table(otu_table, taxa_are_rows = TRUE)
+
+# Step 2: Load taxonomy table
+taxonomy_table <- read.csv("tax_table.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+taxonomy_table <- as.matrix(taxonomy_table)
+tax <-tax_table(taxonomy_table)
+
+# Step 3: Load metadata
+metadata_table  <- read.delim("metadata.txt", header = TRUE, sep = "\t", row.names = "File_Name")  # Adjust file name and format as needed
+#metadata_table  <- as.matrix(metadata_table)
+metadata <-sample_data(metadata_table)
+
+# Create phyloseq object
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+#clr-transformed compositions of otu table without batch correction
+(ps_clr <- microbiome::transform(phyloseqin, "clr"))
+
+
+#https://rdrr.io/bioc/sva/man/ComBat.html
+#https://evayiwenwang.github.io/Managing_batch_effects/adjust.html
+# parametric adjustment
+#combat_edata1 = ComBat(dat=edata, batch=batch, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+
+# non-parametric adjustment, mean-only version
+#combat_edata2 = ComBat(dat=edata, batch=batch, mod=NULL, par.prior=FALSE, mean.only=TRUE)
+
+# reference-batch version, with covariates
+#combat_edata3 = ComBat(dat=edata, batch=batch, mod=mod, par.prior=TRUE, ref.batch=3)
+
+
+#clr-transformed compositions of otu table with combat remove batch correction --> parametric adjustment
+ps_clr.combat <- ComBat(dat=otu_table(ps_clr), batch = sample_data(ps_clr)$X16srRNA_Run_., mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+ps_clr.combat.otu=otu_table(ps_clr.combat, taxa_are_rows = TRUE)
+ps_clr_combat=phyloseq(ps_clr.combat.otu, tax,metadata)
+ps_clr_combat <- subset_samples(ps_clr_combat, Prog.Nonprog.between.20.26y!='P')
+
+# Define a vector of genera
+target_genera <- c(
+  "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Enterobacterales|f__Enterobacteriaceae|g__Klebsiella",
+  "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Alteromonadales|f__Marinobacteraceae|g__Marinobacter",
+  "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Pseudomonadales|f__Pseudomonadaceae|g__Pseudomonas",
+  "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Xanthomonadales|f__Xanthomonadaceae|g__Stenotrophomonas"
+)
+
+s_phyloseqin <- subset_taxa(ps_clr_combat, rownames(tax_table(ps_clr_combat)) %in% target_genera)
+
+
+phyloseq::psmelt(s_phyloseqin) %>%
+  ggplot(data = ., aes(x = Prog_year, y = Abundance)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(aes(color = Family), height = 0, width = 0.2) +
+  labs(x = "", y = "CLR Abundance Value\n") +
+  facet_grid(~ Family + Genus, scales='free',space='free') +
+  theme(strip.text = element_text(size = 10, angle = 0, hjust = 0),legend.position = "none") +
+  scale_x_discrete(labels = c("N___Year_20" = "20-year", "N___Year_26" = "26-year")) #replace x sample labels  
+
+phyloseq::psmelt(s_phyloseqin) %>%
+  ggplot(data = ., aes(x = Prog_year, y = Abundance)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(aes(color = Family), height = 0, width = 0.2) +
+  labs(x = "", y = "CLR Abundance Value\n") +
+  facet_wrap(~ Family + Genus, scales='free', nrow = 2) +
+  theme(strip.text = element_text(size = 10, angle = 0, hjust = 0),legend.position = "none") +
+  scale_x_discrete(labels = c("N___Year_20" = "20-year", "N___Year_26" = "26-year")) #replace x sample labels
+```
+
+```{r}
+
+#setwd("C:/Users/antho/Desktop/run1and2/")
+# Step 1: Load otu table
+otu_table <- read.csv("otu_table.txt", sep = "\t", row.names = 1) 
+# Adjust file name and format as needed
+otu_table <- as.matrix(otu_table)
+otu <-otu_table(otu_table, taxa_are_rows = TRUE)
+
+# Step 2: Load taxonomy table
+taxonomy_table <- read.csv("tax_table.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+taxonomy_table <- as.matrix(taxonomy_table)
+tax <-tax_table(taxonomy_table)
+
+# Step 3: Load metadata
+metadata_table  <- read.delim("metadata.txt", header = TRUE, sep = "\t", row.names = "File_Name")  # Adjust file name and format as needed
+#metadata_table  <- as.matrix(metadata_table)
+metadata <-sample_data(metadata_table)
+
+# Create phyloseq object
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+#clr-transformed compositions of otu table without batch correction
+(ps_clr <- microbiome::transform(phyloseqin, "clr"))
+#filter out non-prog group
+
+#clr-transformed compositions of otu table with combat remove batch correction --> parametric adjustment
+ps_clr.combat <- ComBat(dat=otu_table(ps_clr), batch = sample_data(ps_clr)$X16srRNA_Run_., mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+ps_clr.combat.otu=otu_table(ps_clr.combat, taxa_are_rows = TRUE)
+ps_clr_combat=phyloseq(ps_clr.combat.otu, tax,metadata)
+ps_clr_combat <- subset_samples(ps_clr_combat, Prog.Nonprog.between.20.26y!='N')
+ord_clr_combat <- phyloseq::ordinate(ps_clr_combat, "PCoA", "euclidean")
+plot_ordination(ps_clr_combat, ord_clr_combat, type="Samples", color="Biopsy_collection_date_year")+ geom_point(size = 4,aes(shape=Prog.Nonprog.between.20.26y)) + scale_shape_manual(values = c(16, 17),name = "Non-prog (N) or Prog (P)") +  scale_color_manual(values = c("red", "blue"),name = "Biospy Collection Year") +  stat_chull(aes(color = Biopsy_collection_date_year, fill = Biopsy_collection_date_year), alpha = 0.1, geom = "polygon", show.legend = FALSE) 
+
+
+#permanova tests
+distances = phyloseq::distance(ps_clr_combat, method="euclidean")
+adonis2(distances ~ sample_data(ps_clr_combat)$Biopsy_collection_date_year)
+
+#t-test
+
+results <- data.frame()
+for (i in 1:length(taxa_names(ps_clr_combat))){
+
+  asv <- taxa_names(ps_clr_combat)[i]
+  
+  case_mclr <- mean(otu_table(subset_samples(ps_clr_combat, Biopsy_collection_date_year == "Year_20"))[i])
+  cont_mclr <- mean(otu_table(subset_samples(ps_clr_combat, Biopsy_collection_date_year == "Year_26"))[i])
+  mclrr <- case_mclr/cont_mclr
+ 
+  pval <- t.test(as.vector(otu_table(ps_clr_combat)[i]) ~ sample_data(ps_clr_combat)$Biopsy_collection_date_year)$p.value
+  
+  results <- rbind(results, data.frame(Representative_ASV = asv, 
+                                       Case_Mean_CLR = case_mclr, 
+                                       Control_Mean_CLR = cont_mclr, 
+                                       Mean_CLR_Ratio = mclrr, 
+                                       P = pval))
+}
+                                 
+# Perform FDR correction for pvalues
+results$FDR_BH <- p.adjust(results$P, method = 'BH')
+
+# Add taxa designations to table
+results <- inner_join(results, rownames_to_column(data.frame(tax_table(ps_clr_combat)), "Representative_ASV"), by = "Representative_ASV")
+
+# Write out results
+write.table(results, "t_test_CLR_Biopsy_collection_date_year_genus_prog_combat.txt", quote = F, sep="\t", row.names = F)
+```
+
+
+```{r}
+# plotting enriched taxa in 20 year samples from prog group
+
+#testing sva combat batch effect correction programs
+
+setwd("C:/Users/antho/Desktop/run1and2/")
+# Step 1: Load otu table
+otu_table <- read.csv("otu_table.txt", sep = "\t", row.names = 1) 
+# Adjust file name and format as needed
+otu_table <- as.matrix(otu_table)
+otu <-otu_table(otu_table, taxa_are_rows = TRUE)
+
+# Step 2: Load taxonomy table
+taxonomy_table <- read.csv("tax_table.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+taxonomy_table <- as.matrix(taxonomy_table)
+tax <-tax_table(taxonomy_table)
+
+# Step 3: Load metadata
+metadata_table  <- read.delim("metadata.txt", header = TRUE, sep = "\t", row.names = "File_Name")  # Adjust file name and format as needed
+#metadata_table  <- as.matrix(metadata_table)
+metadata <-sample_data(metadata_table)
+
+# Create phyloseq object
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+#clr-transformed compositions of otu table without batch correction
+(ps_clr <- microbiome::transform(phyloseqin, "clr"))
+
+
+#https://rdrr.io/bioc/sva/man/ComBat.html
+#https://evayiwenwang.github.io/Managing_batch_effects/adjust.html
+# parametric adjustment
+#combat_edata1 = ComBat(dat=edata, batch=batch, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+
+# non-parametric adjustment, mean-only version
+#combat_edata2 = ComBat(dat=edata, batch=batch, mod=NULL, par.prior=FALSE, mean.only=TRUE)
+
+# reference-batch version, with covariates
+#combat_edata3 = ComBat(dat=edata, batch=batch, mod=mod, par.prior=TRUE, ref.batch=3)
+
+
+#clr-transformed compositions of otu table with combat remove batch correction --> parametric adjustment
+ps_clr.combat <- ComBat(dat=otu_table(ps_clr), batch = sample_data(ps_clr)$X16srRNA_Run_., mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+ps_clr.combat.otu=otu_table(ps_clr.combat, taxa_are_rows = TRUE)
+ps_clr_combat=phyloseq(ps_clr.combat.otu, tax,metadata)
+ps_clr_combat <- subset_samples(ps_clr_combat, Prog.Nonprog.between.20.26y!='N')
+
+#phyloseqin_merged = tax_glom(ps_clr_combat, taxrank="Genus", NArm=FALSE)
+
+# Define a vector of genera
+target_genera <- c(
+  "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Burkholderiales|f__Alcaligenaceae|g__Kerstersia",
+  "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Alteromonadales|f__Colwelliaceae|g__Colwellia",
+  "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Enterobacterales|f__Enterobacteriaceae|g__Enterobacter",
+  "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Enterobacterales|f__Enterobacteriaceae|g__Escherichia-Shigella",
+  "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Alteromonadales|f__Marinobacteraceae|g__Marinobacter",
+  "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Pseudomonadales|f__Moraxellaceae|g__Moraxella",
+  "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Pseudomonadales|f__Pseudomonadaceae|g__Pseudomonas",
+  "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Pseudomonadales|f__Pseudomonadaceae|g__Azotobacter",
+  "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Xanthomonadales|f__Rhodanobacteraceae|g__Luteibacter",
+  "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Cellvibrionales|f__Spongiibacteraceae|g__BD1-7_clade",
+  "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Thiomicrospirales|f__Thioglobaceae|g__SUP05_cluster",
+  "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Thiomicrospirales|f__Thiomicrospiraceae|g__endosymbionts",
+  "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Xanthomonadales|f__Xanthomonadaceae|g__Stenotrophomonas"
+)
+
+s_phyloseqin <- subset_taxa(ps_clr_combat, rownames(tax_table(ps_clr_combat)) %in% target_genera)
+
+
+# Subset taxa using the vector
+#s_phyloseqin <- subset_taxa(ps_clr_combat, Genus %in% target_genera)
+
+#s_phyloseqin <- subset_taxa(phyloseqin_merged, Genus =="Enterobacter" | Genus =="Escherichia-Shigella" | Genus =="Klebsiella"  | Genus =="Stenotrophomonas" | Genus =="Serratia")
+
+
+phyloseq::psmelt(s_phyloseqin) %>%
+  ggplot(data = ., aes(x = Prog_year, y = Abundance)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(aes(color = Family), height = 0, width = 0.2) +
+  labs(x = "", y = "CLR Abundance Value\n") +
+  facet_grid(~ Family + Genus, scales='free',space='free') +
+  theme(strip.text = element_text(size = 10, angle = 0, hjust = 0),legend.position = "none") +
+  scale_x_discrete(labels = c("P___Year_20" = "20-year", "P___Year_26" = "26-year")) #replace x sample labels  
+
+phyloseq::psmelt(s_phyloseqin) %>%
+  ggplot(data = ., aes(x = Prog_year, y = Abundance)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(aes(color = Family), height = 0, width = 0.2) +
+  labs(x = "", y = "CLR Abundance Value\n") +
+  facet_wrap(~ Family + Genus, scales='free', nrow = 2) +
+  theme(strip.text = element_text(size = 10, angle = 0, hjust = 0),legend.position = "none") +
+  scale_x_discrete(labels = c("P___Year_20" = "20-year", "P___Year_26" = "26-year")) #replace x sample labels
+```
+```{r}
+# plotting enriched taxa in 26 year samples from prog group
+#testing sva combat batch effect correction programs
+
+setwd("C:/Users/antho/Desktop/run1and2/")
+# Step 1: Load otu table
+otu_table <- read.csv("otu_table.txt", sep = "\t", row.names = 1) 
+# Adjust file name and format as needed
+otu_table <- as.matrix(otu_table)
+otu <-otu_table(otu_table, taxa_are_rows = TRUE)
+
+# Step 2: Load taxonomy table
+taxonomy_table <- read.csv("tax_table.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+taxonomy_table <- as.matrix(taxonomy_table)
+tax <-tax_table(taxonomy_table)
+
+# Step 3: Load metadata
+metadata_table  <- read.delim("metadata.txt", header = TRUE, sep = "\t", row.names = "File_Name")  # Adjust file name and format as needed
+#metadata_table  <- as.matrix(metadata_table)
+metadata <-sample_data(metadata_table)
+
+# Create phyloseq object
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+#clr-transformed compositions of otu table without batch correction
+(ps_clr <- microbiome::transform(phyloseqin, "clr"))
+
+
+#https://rdrr.io/bioc/sva/man/ComBat.html
+#https://evayiwenwang.github.io/Managing_batch_effects/adjust.html
+# parametric adjustment
+#combat_edata1 = ComBat(dat=edata, batch=batch, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+
+# non-parametric adjustment, mean-only version
+#combat_edata2 = ComBat(dat=edata, batch=batch, mod=NULL, par.prior=FALSE, mean.only=TRUE)
+
+# reference-batch version, with covariates
+#combat_edata3 = ComBat(dat=edata, batch=batch, mod=mod, par.prior=TRUE, ref.batch=3)
+
+
+#clr-transformed compositions of otu table with combat remove batch correction --> parametric adjustment
+ps_clr.combat <- ComBat(dat=otu_table(ps_clr), batch = sample_data(ps_clr)$X16srRNA_Run_., mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+ps_clr.combat.otu=otu_table(ps_clr.combat, taxa_are_rows = TRUE)
+ps_clr_combat=phyloseq(ps_clr.combat.otu, tax,metadata)
+ps_clr_combat <- subset_samples(ps_clr_combat, Prog.Nonprog.between.20.26y!='N')
+
+#phyloseqin_merged = tax_glom(ps_clr_combat, taxrank="Genus", NArm=FALSE)
+
+# Define a vector of genera
+target_genera <- bacteria_list <- c(
+  "k__Bacteria|p__Bacteroidota|c__Bacteroidia|o__Bacteroidales|f__Prevotellaceae|g__Prevotellaceae_UCG-004",
+  "k__Bacteria|p__Bacteroidota|c__Bacteroidia|o__Bacteroidales|f__Prevotellaceae|g__Prevotellaceae_UCG-001",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__Lachnospiraceae_FCS020_group",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__Anaerosporobacter",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__Syntrophococcus",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Peptococcales|f__Peptococcaceae|g__uncultured",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__Moryella",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__Anaerocolumna",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__Fusicatenibacter",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__Lachnospira",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Oscillospirales|f__Oscillospiraceae|g__Colidextribacter",
+  "k__Bacteria|p__Bacteroidota|c__Bacteroidia|o__Bacteroidales|f__Rikenellaceae|g__uncultured",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__[Eubacterium]_xylanophilum_group",
+  "k__Bacteria|p__Bacteroidota|c__Bacteroidia|o__Flavobacteriales|f__Flavobacteriaceae|g__Flavobacterium",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__[Ruminococcus]_gnavus_group",
+  "k__Bacteria|p__Bacteroidota|c__Bacteroidia|o__Bacteroidales|f__Dysgonomonadaceae|g__Candidatus_Symbiothrix",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__Lachnospiraceae_UCG-006",
+  "k__Bacteria|p__Proteobacteria|c__Gammaproteobacteria|o__Burkholderiales|f__Comamonadaceae|g__Limnohabitans",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__Epulopiscium",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|f__Hungateiclostridiaceae|g__Saccharofermentans",
+  "k__Bacteria|p__Bacteroidota|c__Bacteroidia|o__Bacteroidales|f__Tannerellaceae|g__Parabacteroides",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Oscillospirales|f__Ruminococcaceae|g__uncultured",
+  "k__Bacteria|p__Bacteroidota|c__Bacteroidia|o__Bacteroidales|f__Tannerellaceae|g__Candidatus_Vestibaculum",
+  "k__Bacteria|p__Bacteroidota|c__Bacteroidia|o__Bacteroidales|f__Tannerellaceae|g__Macellibacteroides",
+  "k__Bacteria|p__Bacteroidota|c__Bacteroidia|o__Bacteroidales|f__Barnesiellaceae|g__Coprobacter",
+  "k__Bacteria|p__Bacteroidota|c__Bacteroidia|o__Bacteroidales|f__Paludibacteraceae|g__uncultured",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__Lachnospiraceae_XPB1014_group",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__Marvinbryantia",
+  "k__Bacteria|p__Bacteroidota|c__Bacteroidia|o__Bacteroidales|f__Marinilabiliaceae|g__uncultured",
+  "k__Bacteria|p__Bacteroidota|c__Bacteroidia|o__Bacteroidales|f__Tannerellaceae|g__uncultured",
+  "k__Bacteria|p__Bacteroidota|c__Bacteroidia|o__Bacteroidales|f__Dysgonomonadaceae|g__Fermentimonas",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Clostridiales|f__Caloramatoraceae|g__Caloramator",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__GCA-900066575",
+  "k__Bacteria|p__Bacteroidota|c__Bacteroidia|o__Bacteroidales|f__Barnesiellaceae|g__uncultured",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__XBB1006",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__ASF356",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__Hungatella",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__Lachnospiraceae_UCG-007",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Clostridiales|f__Caloramatoraceae|g__uncultured",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Peptostreptococcales-Tissierellales|g__Tissierella",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__Lachnospiraceae_UCG-004",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Peptostreptococcales-Tissierellales|f__Peptostreptococcaceae|g__Romboutsia",
+  "k__Bacteria|p__Bacteroidota|c__Bacteroidia|o__Bacteroidales|f__Paludibacteraceae|g__Paludibacter",
+  "k__Bacteria|p__Firmicutes|c__Clostridia|o__Lachnospirales|f__Lachnospiraceae|g__[Ruminococcus]_gauvreauii_group"
+)
+
+s_phyloseqin <- subset_taxa(ps_clr_combat, rownames(tax_table(ps_clr_combat)) %in% target_genera)
+
+
+# Subset taxa using the vector
+#s_phyloseqin <- subset_taxa(ps_clr_combat, Genus %in% target_genera)
+
+#s_phyloseqin <- subset_taxa(phyloseqin_merged, Genus =="Enterobacter" | Genus =="Escherichia-Shigella" | Genus =="Klebsiella"  | Genus =="Stenotrophomonas" | Genus =="Serratia")
+
+
+phyloseq::psmelt(s_phyloseqin) %>%
+  ggplot(data = ., aes(x = Prog_year, y = Abundance)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(aes(color = Family), height = 0, width = 0.2) +
+  labs(x = "", y = "CLR Abundance Value\n") +
+  facet_grid(~ Family + Genus, scales='free',space='free') +
+  theme(strip.text = element_text(size = 10, angle = 0, hjust = 0),legend.position = "none") +
+  scale_x_discrete(labels = c("P___Year_20" = "20-year", "P___Year_26" = "26-year")) #replace x sample labels  
+
+phyloseq::psmelt(s_phyloseqin) %>%
+  ggplot(data = ., aes(x = Prog_year, y = Abundance)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(aes(color = Family), height = 0, width = 0.2) +
+  labs(x = "", y = "CLR Abundance Value\n") +
+  facet_wrap(~ Family + Genus, scales='free', nrow = 6) +
+  theme(strip.text = element_text(size = 10, angle = 0, hjust = 0),legend.position = "none") +
+  scale_x_discrete(labels = c("P___Year_20" = "20-year", "P___Year_26" = "26-year")) #replace x sample labels
+```
+
+
+```{r}
+#filter out Biopsy_collection_date_year year 20, Prog vs Non-prog
+
+#setwd("C:/Users/antho/Desktop/run1and2/")
+# Step 1: Load otu table
+otu_table <- read.csv("otu_table.txt", sep = "\t", row.names = 1) 
+# Adjust file name and format as needed
+otu_table <- as.matrix(otu_table)
+otu <-otu_table(otu_table, taxa_are_rows = TRUE)
+
+# Step 2: Load taxonomy table
+taxonomy_table <- read.csv("tax_table.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+taxonomy_table <- as.matrix(taxonomy_table)
+tax <-tax_table(taxonomy_table)
+
+# Step 3: Load metadata
+metadata_table  <- read.delim("metadata.txt", header = TRUE, sep = "\t", row.names = "File_Name")  # Adjust file name and format as needed
+#metadata_table  <- as.matrix(metadata_table)
+metadata <-sample_data(metadata_table)
+
+# Create phyloseq object
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+#clr-transformed compositions of otu table without batch correction
+(ps_clr <- microbiome::transform(phyloseqin, "clr"))
+
+
+#filter out Biopsy_collection_date_year year 26
+
+#clr-transformed compositions of otu table with combat remove batch correction --> parametric adjustment
+ps_clr.combat <- ComBat(dat=otu_table(ps_clr), batch = sample_data(ps_clr)$X16srRNA_Run_., mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+ps_clr.combat.otu=otu_table(ps_clr.combat, taxa_are_rows = TRUE)
+ps_clr_combat=phyloseq(ps_clr.combat.otu, tax,metadata)
+ps_clr_combat <- subset_samples(ps_clr_combat, Biopsy_collection_date_year!='Year_26')
+ord_clr_combat <- phyloseq::ordinate(ps_clr_combat, "PCoA", "euclidean")
+#Non-prog vs prog  
+plot_ordination(ps_clr_combat, ord_clr_combat, type="Samples", color="Prog.Nonprog.between.20.26y")+ geom_point(size = 4,aes(shape=Biopsy_collection_date_year)) + scale_shape_manual(values = c(16, 17),name = "Biospy Collection Year") +  scale_color_manual(values = c("red", "blue"),name = "Non-prog (N) or Prog (P)") +  stat_chull(aes(color = Prog.Nonprog.between.20.26y, fill = Prog.Nonprog.between.20.26y), alpha = 0.1, geom = "polygon", show.legend = FALSE) 
+
+#permanova tests
+
+distances = phyloseq::distance(ps_clr_combat, method="euclidean")
+adonis2(distances ~ sample_data(ps_clr_combat)$Prog.Nonprog.between.20.26y)
+
+```
+
+```{r}
+#filter out Biopsy_collection_date_year year 26, Prog vs Non-prog
+
+#setwd("C:/Users/antho/Desktop/run1and2/")
+# Step 1: Load otu table
+otu_table <- read.csv("otu_table.txt", sep = "\t", row.names = 1) 
+# Adjust file name and format as needed
+otu_table <- as.matrix(otu_table)
+otu <-otu_table(otu_table, taxa_are_rows = TRUE)
+
+# Step 2: Load taxonomy table
+taxonomy_table <- read.csv("tax_table.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+taxonomy_table <- as.matrix(taxonomy_table)
+tax <-tax_table(taxonomy_table)
+
+# Step 3: Load metadata
+metadata_table  <- read.delim("metadata.txt", header = TRUE, sep = "\t", row.names = "File_Name")  # Adjust file name and format as needed
+#metadata_table  <- as.matrix(metadata_table)
+metadata <-sample_data(metadata_table)
+
+# Create phyloseq object
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+#clr-transformed compositions of otu table without batch correction
+(ps_clr <- microbiome::transform(phyloseqin, "clr"))
+
+#clr-transformed compositions of otu table with combat remove batch correction --> parametric adjustment
+ps_clr.combat <- ComBat(dat=otu_table(ps_clr), batch = sample_data(ps_clr)$X16srRNA_Run_., mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+ps_clr.combat.otu=otu_table(ps_clr.combat, taxa_are_rows = TRUE)
+ps_clr_combat=phyloseq(ps_clr.combat.otu, tax,metadata)
+ps_clr_combat <- subset_samples(ps_clr_combat, Biopsy_collection_date_year!='Year_20')
+ord_clr_combat <- phyloseq::ordinate(ps_clr_combat, "PCoA", "euclidean")
+plot_ordination(ps_clr_combat, ord_clr_combat, type="Samples", color="Prog.Nonprog.between.20.26y")+ geom_point(size = 4,aes(shape=Biopsy_collection_date_year)) + scale_shape_manual(values = c(16, 17),name = "Biospy Collection Year") +  scale_color_manual(values = c("red", "blue"),name = "Non-prog (N) or Prog (P)") +  stat_chull(aes(color = Prog.Nonprog.between.20.26y, fill = Prog.Nonprog.between.20.26y), alpha = 0.1, geom = "polygon", show.legend = FALSE) 
+
+#permanova tests
+distances = phyloseq::distance(ps_clr_combat, method="euclidean")
+adonis2(distances ~ sample_data(ps_clr_combat)$Prog.Nonprog.between.20.26y)
+```
+
+
+```{r}
+#creating PCA plot for taxa --> using sva combat batch effect correction programs
+#note the use of RDA instead of PCoA --> in order to plot type="taxa" in ordination with CLR transformed data, must use PCA/RDA etc because PCoA leads to error about negatives
+#https://david-barnett.github.io/microViz/articles/web-only/ordination.html --> reference/explanation about above comment
+#Aitchison distance
+#The Euclidean distance is similar to the distance we humans are familiar with in the physical world. The results of a PCA is practically equivalent to a PCoA with Euclidean distances. The Aitchison distance is a dissimilarity measure calculated as the Euclidean distance between observations (samples) after performing a centered log ratio (“clr”) transformation. That is why the Aitchison distance PCoA, below, looks the same as the PCA we made earlier. 
+#However, we cannot use plot_taxa, as the taxa loadings are only available for PCA (and related methods like RDA).
+
+#"Several of these techniques are closely related.  For example, a RDA without constraining explanatory variables is a PCA, and a dbRDA without constraining explanatory variables is a PCoA." --> https://uw.pressbooks.pub/appliedmultivariatestatistics/chapter/rda-and-dbrda/
+
+setwd("C:/Users/antho/Desktop/run1and2/")
+# Step 1: Load otu table
+otu_table <- read.csv("otu_table.txt", sep = "\t", row.names = 1) 
+# Adjust file name and format as needed
+otu_table <- as.matrix(otu_table)
+otu <-otu_table(otu_table, taxa_are_rows = TRUE)
+
+# Step 2: Load taxonomy table
+taxonomy_table <- read.csv("tax_table.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+taxonomy_table <- as.matrix(taxonomy_table)
+tax <-tax_table(taxonomy_table)
+
+# Step 3: Load metadata
+metadata_table  <- read.delim("metadata.txt", header = TRUE, sep = "\t", row.names = "File_Name")  # Adjust file name and format as needed
+#metadata_table  <- as.matrix(metadata_table)
+metadata <-sample_data(metadata_table)
+
+# Create phyloseq object
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+
+
+#clr-transformed compositions of otu table without batch correction
+(ps_clr <- microbiome::transform(phyloseqin, "clr"))
+
+
+#filter taxa by % abundance
+rel_phyloseqin <- microbiome::transform(phyloseqin, "compositional")
+phyloseqin_merged = tax_glom(rel_phyloseqin, taxrank="Phylum", NArm=FALSE)
+TopNOTUs <- names(sort(taxa_sums(phyloseqin_merged), TRUE)[1:10])
+TopNOTUs
+#TopNOTUs <- prune_taxa(TopNOTUs, ps_clr)
+#tax_table(TopNOTUs)
+
+#filter taxa --> text filter
+# Campilobacterota
+# Firmicutes
+# Proteobacteria
+# Bacteroidota
+# Actinobacteriota
+# Fusobacteriota
+# Desulfobacterota
+# Deinococcota
+# Spirochaetota
+# Verrucomicrobiota
+#phyla_list <- c("Campilobacterota", "Firmicutes", "Proteobacteria","Bacteroidota","Actinobacteriota","Fusobacteriota","Desulfobacterota","Deinococcota","Spirochaetota","Verrucomicrobiota")
+#ps_clr <- subset_taxa(ps_clr, Phylum %in% phyla_list)
+ps_clr <- subset_taxa(ps_clr, Phylum == "Actinobacteriota" | Phylum == "Bacteroidota" | Phylum == "Proteobacteria" | Phylum == "Campilobacterota" | Phylum == "Firmicutes" )
+
+
+#clr-transformed compositions of otu table with combat remove batch correction --> parametric adjustment
+ps_clr.combat <- ComBat(dat=otu_table(ps_clr), batch = sample_data(ps_clr)$X16srRNA_Run_., mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+ps_clr.combat.otu=otu_table(ps_clr.combat, taxa_are_rows = TRUE)
+ps_clr_combat=phyloseq(ps_clr.combat.otu, tax,metadata)
+#note the use of RDA instead of PCoA --> in order to plot type="taxa" in ordination with CLR transformed data, must use PCA/RDA etc because PCoA leads to error about negatives
+#https://david-barnett.github.io/microViz/articles/web-only/ordination.html --> reference/explanation about above comment
+ord_clr_combat <- phyloseq::ordinate(ps_clr_combat, "RDA", "euclidean")
+plot_ordination(ps_clr_combat, ord_clr_combat, type="taxa", color="Phylum")+ geom_point(size = 4)+  stat_chull(aes(color = Phylum, fill = Phylum), alpha = 0.1, geom = "polygon", show.legend = FALSE) 
+
+
+plot_ordination(ps_clr_combat, ord_clr_combat, type="Samples", color="Biopsy_collection_date_year")+ geom_point(size = 4,aes(shape=Prog.Nonprog.between.20.26y)) + scale_shape_manual(values = c(16, 17),name = "Non-prog (N) or Prog (P)") +  scale_color_manual(values = c("red", "blue"),name = "Biospy Collection Year") +  stat_chull(aes(color = Biopsy_collection_date_year, fill = Biopsy_collection_date_year), alpha = 0.1, geom = "polygon", show.legend = FALSE) 
+```
+
+
+
+```{r}
+##GLM test on combat corrected data
+setwd("C:/Users/antho/Desktop/run1and2/")
+# Step 1: Load otu table
+otu_table <- read.csv("otu_table.txt", sep = "\t", row.names = 1) 
+# Adjust file name and format as needed
+otu_table <- as.matrix(otu_table)
+otu <-otu_table(otu_table, taxa_are_rows = TRUE)
+
+# Step 2: Load taxonomy table
+taxonomy_table <- read.csv("tax_table.txt", sep = "\t", row.names = 1)  # Adjust file name and format as needed
+taxonomy_table <- as.matrix(taxonomy_table)
+tax <-tax_table(taxonomy_table)
+
+# Step 3: Load metadata
+metadata_table  <- read.delim("metadata.txt", header = TRUE, sep = "\t", row.names = "File_Name")  # Adjust file name and format as needed
+#metadata_table  <- as.matrix(metadata_table)
+metadata <-sample_data(metadata_table)
+
+# Create phyloseq object
+phyloseqin <- phyloseq(otu, tax, metadata)
+
+s_phyloseqin <- subset_samples(phyloseqin, Prog.Nonprog.between.20.26y!='N')
+
+
+#clr-transformed compositions of otu table without batch correction
+(ps_clr <- microbiome::transform(s_phyloseqin, "clr"))
+
+
+#clr-transformed compositions of otu table with combat remove batch correction --> parametric adjustment
+ps_clr.combat <- ComBat(dat=otu_table(ps_clr), batch = sample_data(ps_clr)$X16srRNA_Run_., mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+ps_clr.combat.otu=otu_table(ps_clr.combat, taxa_are_rows = TRUE)
+ps_clr_combat=phyloseq(ps_clr.combat.otu, tax,metadata)
+
+
+# Apply GLM on clr transformed data for all taxa
+results <- data.frame()
+for (i in 1:length(taxa_names(ps_clr_combat))){
+
+  asv <- taxa_names(ps_clr_combat)[i]
+ 
+  mod <- glm(as.vector(otu_table(ps_clr_combat)[i]) ~ sample_data(ps_clr_combat)$Biopsy_collection_date_year)
+  
+  beta <- summary(mod)$coefficients[2,1]
+  se <- summary(mod)$coefficients[2,2]
+  pval <- summary(mod)$coefficients[2,4]
+
+  results <- rbind(results, data.frame(Representative_ASV = asv,  Beta = beta, SE = se, P = pval))
+}
+
+# Perform FDR correction for pvalues
+results$FDR_BH <- p.adjust(results$P, method = 'BH')
+
+# Add taxa designations to table
+results <- inner_join(results, rownames_to_column(data.frame(tax_table(ps_clr_combat)), "Representative_ASV"), by = "Representative_ASV")
+
+write.table(results, "GLM_CLR_group.txt", quote = F, sep="\t", row.names = F)
+```
+
+```{r}
+#install.packages("ggbeeswarm")
+library(ggbeeswarm)
+
+setwd("C:/Users/antho/Desktop/run1and2/")
+metadata_table  <- read.delim("metadata2.txt", header = TRUE, sep = "\t", row.names = "MIT_Accession")  # Adjust file name and format as needed
+
+ggplot(metadata_table,aes( x=Biopsy_collection_date_year,y=factor(Dx, levels = rev(levels(factor(Dx))))),shape = Hp_status) +geom_dotplot(binaxis = 'y', stackdir = 'center',aes(fill = Dx))+ facet_wrap(~Prog.Nonprog.between.20.26y) +labs(x = "", y = "", color = "")
+
+ggplot(metadata_table, aes(x = Biopsy_collection_date_year, color = Hp_status,y=factor(Dx, levels = rev(levels(factor(Dx)))))) + geom_beeswarm(cex = 3)+ facet_wrap(~Prog.Nonprog.between.20.26y) +labs(x = "", y = "", color = "")
+
+ggplot(metadata_table, aes(x = Biopsy_collection_date_year, color = Dx, shape = Hp_status, y=factor(Dx, levels = rev(levels(factor(Dx)))))) + geom_beeswarm(cex = 5, size=5)+ facet_wrap(~Prog.Nonprog.between.20.26y) +labs(x = "", y = "", color = "")
+
+ggplot(metadata_table, aes(x = Biopsy_collection_date_year, fill = Dx)) + geom_bar(position = "stack")+ facet_wrap(~Prog.Nonprog.between.20.26y)
+```
